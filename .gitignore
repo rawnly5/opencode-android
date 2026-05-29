@@ -1,0 +1,19 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# App build outputs
+app/build/
+
+# Node.js dependencies
+app/src/main/assets/nodejs-project/node_modules/
+
+# Gradle wrapper
+gradle/wrapper/gradle-wrapper.jar

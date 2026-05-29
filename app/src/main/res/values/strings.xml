@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenCode</string>
+    <string name="app_description">AI coding agent for Android</string>
+    <string name="notification_channel_name">OpenCode Service</string>
+    <string name="notification_channel_description">OpenCode engine running in background</string>
+    <string name="startup_error">Startup Error</string>
+    <string name="please_restart">Please restart the app</string>
+</resources>
