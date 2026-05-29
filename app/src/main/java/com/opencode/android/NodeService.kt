@@ -5,12 +5,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
-import java.util.regex.Pattern
 
 class NodeService : Service() {
 
@@ -29,9 +29,6 @@ class NodeService : Service() {
     private var process: Process? = null
     private var isRunning = false
 
-    private val portPattern = Pattern.compile("(https?://127\\.0\\.0\\.1|localhost)[:/]?(\\d+)")
-    private val portJsonPattern = Pattern.compile("\"port\"\\s*:\\s*(\\d+)")
-
     fun setListener(listener: NodeListener) {
         this.listener = listener
     }
@@ -40,7 +37,6 @@ class NodeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        extractAssets()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -60,45 +56,46 @@ class NodeService : Service() {
 
         Thread {
             try {
-                val nodeDir = File(filesDir, "nodejs-project")
-                val mainJs = File(nodeDir, "main.js")
+                val projectDir = File(filesDir, "nodejs-project")
+                val nodeBinary: File
+                val mainJs = File(projectDir, "main.js")
+                val nodeModulesDir = File(projectDir, "node_modules")
+                val nodeBinDir = File(projectDir, "nodejs")
 
                 if (!mainJs.exists()) {
-                    listener?.onError("Node.js project not found in app data.")
+                    Log.i("OpenCode-Node", "Extracting assets to ${projectDir.absolutePath}")
+                    extractAssets(projectDir)
+                }
+
+                nodeBinary = findNodeBinary(projectDir)
+
+                if (nodeBinary == null || !nodeBinary.exists()) {
+                    listener?.onError("Node.js binary not found for this device architecture")
                     isRunning = false
                     return@Thread
                 }
 
-                val nodeModulesDir = File(nodeDir, "node_modules")
-                if (!nodeModulesDir.exists()) {
-                    Log.i("OpenCode-Node", "Running npm install...")
+                Log.i("OpenCode-Node", "Using Node.js: ${nodeBinary.absolutePath}")
+                nodeBinary.setExecutable(true)
+
+                if (!nodeModulesDir.exists() || !nodeModulesDir.listFiles().isNullOrEmpty().not()) {
                     listener?.onOutput("[setup] Installing opencode dependencies...")
-                    runNpmInstall(nodeDir)
+                    runNpmInstall(nodeBinary, projectDir)
                 }
 
-                val os = System.getProperty("os.arch") ?: "aarch64"
-                Log.i("OpenCode-Node", "Architecture: $os")
-
-                val nodeBin = File(nodeDir, "nodejs/bin/node")
-                if (!nodeBin.exists()) {
-                    val altNodeBin = File(
-                        applicationInfo.nativeLibDir,
-                        "libnode.so"
-                    )
-                    if (altNodeBin.exists()) {
-                        Log.i("OpenCode-Node", "Using libnode.so from native libs")
-                    }
-                }
+                val env = mutableMapOf<String, String>(
+                    "NODE_ENV" to "production",
+                    "NODE_PATH" to nodeModulesDir.absolutePath,
+                    "HOME" to projectDir.absolutePath,
+                    "OPENCODE_HOME" to File(filesDir, ".opencode").absolutePath
+                )
 
                 val processBuilder = ProcessBuilder(
-                    "node",
+                    nodeBinary.absolutePath,
                     mainJs.absolutePath
                 ).apply {
-                    environment()["NODE_ENV"] = "production"
-                    environment()["NODE_PATH"] = nodeModulesDir.absolutePath
-                    environment()["HOME"] = nodeDir.absolutePath
-                    environment()["OPENCODE_HOME"] = File(filesDir, ".opencode").absolutePath
-                    directory(nodeDir)
+                    environment().putAll(env)
+                    directory(projectDir)
                     redirectErrorStream(true)
                 }
 
@@ -106,9 +103,7 @@ class NodeService : Service() {
                 val reader = BufferedReader(InputStreamReader(process!!.inputStream))
                 var line: String?
 
-                while (process!!.isAlive.also { if (!it) break } && reader.readLine()
-                        .also { line = it } != null
-                ) {
+                while (process!!.isAlive && reader.readLine().also { line = it } != null) {
                     listener?.onOutput(line ?: "")
 
                     val port = extractPort(line ?: "")
@@ -123,7 +118,7 @@ class NodeService : Service() {
                 isRunning = false
 
                 if (exitCode != 0) {
-                    listener?.onError("Node.js process exited with code: $exitCode")
+                    listener?.onError("Node.js exited with code: $exitCode")
                 }
 
             } catch (e: Exception) {
@@ -139,38 +134,66 @@ class NodeService : Service() {
         isRunning = false
     }
 
-    private fun extractPort(output: String): Int {
-        val jsonMatcher = portJsonPattern.matcher(output)
-        if (jsonMatcher.find()) {
-            return jsonMatcher.group(1).toIntOrNull() ?: 0
+    private fun findNodeBinary(projectDir: File): File? {
+        val arch = Build.SUPPORTED_64_BIT_ABIS.firstOrNull() ?: "arm64-v8a"
+        Log.i("OpenCode-Node", "Device architecture: ${arch}")
+
+        val candidates = listOf(
+            File(projectDir, "nodejs/bin/node"),
+            File(projectDir, "nodejs/$arch/bin/node"),
+            File(projectDir, "nodejs/node"),
+        )
+
+        for (candidate in candidates) {
+            if (candidate.exists()) {
+                return candidate
+            }
         }
 
-        val urlMatcher = portPattern.matcher(output)
-        if (urlMatcher.find()) {
-            return urlMatcher.group(2).toIntOrNull() ?: 0
+        val altDir = File(projectDir, "nodejs").listFiles()
+            ?.firstOrNull { it.isDirectory && it.name.startsWith("node-v") }
+
+        if (altDir != null) {
+            val bin = File(altDir, "bin/node")
+            if (bin.exists()) return bin
+        }
+
+        return null
+    }
+
+    private fun extractPort(output: String): Int {
+        val jsonMatcher = """"port"\s*:\s*(\d+)""".toRegex().find(output)
+        if (jsonMatcher != null) {
+            return jsonMatcher.groupValues[1].toIntOrNull() ?: 0
+        }
+
+        val urlMatcher = """https?://127\.0\.0\.1[:\/](\d+)""".toRegex().find(output)
+        if (urlMatcher != null) {
+            return urlMatcher.groupValues[1].toIntOrNull() ?: 0
         }
 
         return 0
     }
 
-    private fun extractAssets() {
+    private fun extractAssets(destDir: File) {
         try {
-            val destDir = File(filesDir, "nodejs-project")
-            if (destDir.exists() && destDir.listFiles()?.isNotEmpty() == true) {
-                Log.i("OpenCode-Node", "Assets already extracted, skipping")
-                return
-            }
-
             destDir.mkdirs()
 
-            assets.list("nodejs-project")?.forEach { asset ->
+            val assetPath = "nodejs-project"
+            assets.list(assetPath)?.forEach { asset ->
+                if (asset == "nodejs") return@forEach
+
                 val destFile = File(destDir, asset)
-                if (asset.contains(".")) {
-                    assets.open("nodejs-project/$asset").use { input ->
+                destFile.parentFile?.mkdirs()
+
+                try {
+                    assets.open("$assetPath/$asset").use { input ->
                         destFile.outputStream().use { output ->
                             input.copyTo(output)
                         }
                     }
+                } catch (e: Exception) {
+                    Log.w("OpenCode-Node", "Could not extract $asset: ${e.message}")
                 }
             }
 
@@ -180,16 +203,18 @@ class NodeService : Service() {
         }
     }
 
-    private fun runNpmInstall(nodeDir: File) {
+    private fun runNpmInstall(nodeBinary: File, nodeDir: File) {
         try {
+            listener?.onOutput("[setup] npm install in progress (internet required)...")
+
             val pb = ProcessBuilder(
-                "node",
+                nodeBinary.absolutePath,
                 "-e",
                 """
                 const { execSync } = require('child_process');
                 try {
-                    execSync('npm install --production', {
-                        cwd: '${nodeDir.absolutePath}',
+                    execSync('npm install --production --no-optional', {
+                        cwd: ${nodeDir.absolutePath},
                         stdio: 'inherit',
                         env: { ...process.env, NODE_ENV: 'production' }
                     });
@@ -198,19 +223,33 @@ class NodeService : Service() {
                 }
                 """.trimIndent()
             ).apply {
-                environment()["NODE_ENV"] = "production"
                 directory(nodeDir)
                 inheritIO()
             }
 
-            val installProcess = pb.start()
-            val exitCode = installProcess.waitFor()
+            val installProc = pb.start()
+            val exitCode = installProc.waitFor()
 
             if (exitCode != 0) {
-                Log.w("OpenCode-Node", "npm install had issues, attempting to continue")
+                Log.w("OpenCode-Node", "npm install had issues, attempting alternate method")
+                val npmResult = ProcessBuilder(
+                    nodeBinary.absolutePath,
+                    File(nodeDir, "node_modules/npm/bin/npm-cli.js").absolutePath,
+                    "install", "--production", "--no-optional"
+                ).apply {
+                    directory(nodeDir)
+                    inheritIO()
+                }.start().waitFor()
+
+                if (npmResult != 0) {
+                    listener?.onOutput("[warn] npm install had issues, trying without npm...")
+                }
             }
+
+            listener?.onOutput("[setup] Dependencies installed")
         } catch (e: Exception) {
             Log.e("OpenCode-Node", "npm install failed", e)
+            listener?.onOutput("[error] npm install failed: ${e.message}")
         }
     }
 
@@ -222,7 +261,7 @@ class NodeService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val builder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, OpenCodeApplication.CHANNEL_ID)
         } else {
             Notification.Builder(this)

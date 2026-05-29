@@ -46,11 +46,6 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            excludes += "/META-INF/DEPENDENCIES"
-            excludes += "/META-INF/LICENSE"
-            excludes += "/META-INF/LICENSE.txt"
-            excludes += "/META-INF/NOTICE"
-            excludes += "/META-INF/NOTICE.txt"
         }
     }
 }
@@ -59,22 +54,43 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.nodejs.mobile.android)
 }
 
-task<Exec>("npmInstall") {
-    workingDir = file("src/main/assets/nodejs-project")
-    commandLine("npm", "install", "--production", "--no-optional")
-}
+val downloadNodeJs = tasks.register("downloadNodeJs") {
+    val nodeDir = file("src/main/assets/nodejs-project/nodejs")
+    val nodeBin = File(nodeDir, "bin/node")
 
-task<Sync>("bundleNodeModules") {
-    dependsOn("npmInstall")
-    from("src/main/assets/nodejs-project/node_modules")
-    into("src/main/assets/nodejs-project/node_modules")
+    onlyIf { !nodeBin.exists() }
+
+    doLast {
+        nodeDir.mkdirs()
+
+        val arch = "arm64"
+        val version = "22.12.0"
+        val url = "https://nodejs.org/dist/v${version}/node-v${version}-android-${arch}.tar.gz"
+        val tarball = File(temporaryDir, "node-android.tar.gz")
+
+        logger.lifecycle("Downloading Node.js $version for Android $arch...")
+        ant.invokeMethod("get", mapOf("src" to url, "dest" to tarball))
+        ant.invokeMethod("untar", mapOf(
+            "src" to tarball,
+            "dest" to nodeDir,
+            "compression" to "gzip",
+            "strip" to 1
+        ))
+
+        val extractedBin = File(nodeDir, "bin/node")
+        if (extractedBin.exists()) {
+            extractedBin.setExecutable(true)
+            logger.lifecycle("Node.js binary ready at ${extractedBin.absolutePath}")
+        } else {
+            throw GradleException("Failed to extract Node.js binary")
+        }
+    }
 }
 
 tasks.whenTaskAdded {
-    if (name.startsWith("merge") && name.endsWith("NativeLibs")) {
-        dependsOn("npmInstall")
+    if (name.startsWith("mergeReleaseNativeLibs") || name.startsWith("mergeDebugNativeLibs")) {
+        dependsOn(downloadNodeJs)
     }
 }

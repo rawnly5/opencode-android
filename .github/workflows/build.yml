@@ -22,9 +22,22 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install Node.js dependencies
+      - name: Install opencode dependencies
         working-directory: app/src/main/assets/nodejs-project
         run: npm install --production --no-optional
+
+      - name: Download Node.js for Android (arm64)
+        working-directory: app/src/main/assets/nodejs-project
+        run: |
+          NODE_VERSION="22.12.0"
+          ARCH="arm64"
+          mkdir -p nodejs
+          curl -sL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-android-${ARCH}.tar.gz" \
+            -o /tmp/node-android.tar.gz
+          tar -xzf /tmp/node-android.tar.gz -C nodejs --strip-components=1
+          chmod +x nodejs/bin/node
+          ls -lh nodejs/bin/node
+          rm -f /tmp/node-android.tar.gz
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -33,7 +46,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
