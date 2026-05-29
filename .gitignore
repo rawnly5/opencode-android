@@ -15,5 +15,5 @@ app/build/
 # Node.js dependencies
 app/src/main/assets/nodejs-project/node_modules/
 
-# Gradle wrapper
-gradle/wrapper/gradle-wrapper.jar
+# Gradle wrapper (jar is committed for CI builds)
+# gradle/wrapper/gradle-wrapper.jar
