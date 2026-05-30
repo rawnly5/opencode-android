@@ -33,8 +33,15 @@ jobs:
       - name: Build Release APK
         run: ./gradlew assembleRelease --no-daemon
 
+      - name: Find and upload APK
+        run: |
+          echo "Looking for APK..."
+          find app/build -name "*.apk" -type f 2>/dev/null || echo "No APK found in app/build"
+          ls -la app/build/outputs/apk/ 2>/dev/null || echo "No outputs/apk directory"
+          ls -la app/build/outputs/ 2>/dev/null || echo "No outputs directory"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: opencode-android-release
-          path: app/build/outputs/apk/release/app-release.apk
+          path: app/build/outputs/apk/release/*.apk
