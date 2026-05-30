@@ -17,6 +17,10 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        ndk {
+            abiFilters "arm64-v8a"
+        }
     }
 
     buildTypes {
@@ -56,41 +60,14 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
 }
 
-val downloadNodeJs = tasks.register("downloadNodeJs") {
-    val nodeDir = file("src/main/assets/nodejs-project/nodejs")
-    val nodeBin = File(nodeDir, "bin/node")
-
-    onlyIf { !nodeBin.exists() }
-
-    doLast {
-        nodeDir.mkdirs()
-
-        val arch = "arm64"
-        val version = "22.12.0"
-        val url = "https://nodejs.org/dist/v${version}/node-v${version}-android-${arch}.tar.gz"
-        val tarball = File(temporaryDir, "node-android.tar.gz")
-
-        logger.lifecycle("Downloading Node.js $version for Android $arch...")
-        ant.invokeMethod("get", mapOf("src" to url, "dest" to tarball))
-        ant.invokeMethod("untar", mapOf(
-            "src" to tarball,
-            "dest" to nodeDir,
-            "compression" to "gzip",
-            "strip" to 1
-        ))
-
-        val extractedBin = File(nodeDir, "bin/node")
-        if (extractedBin.exists()) {
-            extractedBin.setExecutable(true)
-            logger.lifecycle("Node.js binary ready at ${extractedBin.absolutePath}")
-        } else {
-            throw GradleException("Failed to extract Node.js binary")
-        }
-    }
+val buildAssets by tasks.registering(Exec::class) {
+    description = "Download and patch opencode binary + glibc for Android"
+    workingDir = rootDir
+    commandLine("bash", "build_assets.sh")
 }
 
 tasks.whenTaskAdded {
-    if (name.startsWith("mergeReleaseNativeLibs") || name.startsWith("mergeDebugNativeLibs")) {
-        dependsOn(downloadNodeJs)
+    if (name.startsWith("mergeReleaseAssets") || name.startsWith("mergeDebugAssets")) {
+        dependsOn(buildAssets)
     }
 }

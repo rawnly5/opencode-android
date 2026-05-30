@@ -12,8 +12,8 @@ local.properties
 # App build outputs
 app/build/
 
-# Node.js dependencies
-app/src/main/assets/nodejs-project/node_modules/
+# Generated opencode assets (binary + glibc)
+app/src/main/assets/opencode/
 
 # Gradle wrapper (jar is committed for CI builds)
 # gradle/wrapper/gradle-wrapper.jar
